@@ -36,14 +36,34 @@ git clone https://github.com/popek1990/rclone-gpg-cloud-backup.git
 cd rclone-gpg-cloud-backup
 ```
 
-### 2. Create starter config
+### 2. Make files executable
+2. Make files executable
+Before running the script, make sure it has execute permissions:
+```bash
+sudo chmod +x rclone-gpg-cloud-backup.sh requiraments
+```
+
+**Install required packages**
+
+Install all system dependencies automatically from the included list:
+
+```bash
+sudo apt update
+xargs -a requiraments sudo apt install -y
+```
+
+If rclone was not installed or is outdated, use the official installer:
+
+`curl https://rclone.org/install.sh | sudo bash`
+
+### 4. Create starter config
 ```bash
 ./rclone-gpg-cloud-backup.sh --init-config
 ```
 
 This command will create the file (in this folder):
 ```bash
-./.rclone.conf
+rclone-gpg-cloud-backup/
 ```
 
 Open this file in your text editor (for example `nano`) and set:
