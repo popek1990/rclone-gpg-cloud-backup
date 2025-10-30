@@ -1,12 +1,11 @@
-
 #!/usr/bin/env bash
 # ==============================================================================
 # 💾 rclone-gpg-cloud-backup
 # 🔐 TAR -> GPG encrypt -> rclone upload (OneDrive / GDrive / S3 / any rclone remote)
-# ☁️ Simple, beginner-friendly. Config in a separate hidden file. Ready for cron.
+# ☁️ Simple, beginner-friendly. Config file lives next to this script: ./rclone.conf
 #                                 Version: 1.0
 # ==============================================================================
-CONFIG_FILE=""
+
 set -euo pipefail
 export LANG=C
 
@@ -53,10 +52,13 @@ REMOTE_DIR="Backups"
 LOCAL_RETENTION_DAYS="7"
 REMOTE_RETENTION_DAYS="14"
 
+# ---------- Paths to script & default config (next to script) ----------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CONFIG_FILE_DEFAULT="${SCRIPT_DIR}/rclone.conf"
+CONFIG_FILE="${CONFIG_FILE_DEFAULT}"
+
 # ---------- CLI ----------
-DO_DRYRUN="no"; DO_RETAIN="yes"
-CONFIG_FILE_DEFAULT="$HOME/.rclone-gpg-cloud-backup.conf"   # hidden config
-CONFIG_FILE_DEFAULT="$(dirname "$(realpath "$0")")/rclone.conf"
+DO_DRYRUN="no"; DO_RETAIN="yes"; INIT_CONFIG="no"; DO_CHECK="no"
 
 usage() {
 cat <<'HLP'
@@ -64,33 +66,31 @@ Usage:
   rclone-gpg-cloud-backup.sh [--dry-run] [--no-retain] [--config FILE] [--init-config] [--check] [--version]
 
 Description:
-  Simple backup pipeline: TAR -> GPG encrypt -> rclone upload.
+  Simple backup: TAR -> GPG encrypt -> rclone upload.
   Works with any rclone remote (OneDrive/GDrive/S3/etc).
-  Config lives in a hidden file (default: ~/.rclone-gpg-cloud-backup.conf).
+  Default config path: ./rclone.conf (same folder as this script).
 
 Options:
   --dry-run        Do everything except cloud upload.
   --no-retain      Skip retention (no deletion of old backups).
-  --config FILE    Use specific config file (default: ~/.rclone-gpg-cloud-backup.conf).
-  --init-config    Create a starter hidden config and exit (won't overwrite).
+  --config FILE    Use specific config file (default: ./rclone.conf).
+  --init-config    Create a starter config file and exit (won't overwrite).
   --check          Only check deps/config/GPG/rclone and exit.
   --version        Print version and exit.
 
 Quick start:
   1) ./rclone-gpg-cloud-backup.sh --init-config
-  2) Edit: ~/.rclone-gpg-cloud-backup.conf  (set BACKUP_ITEMS + GPG_RECIPIENT_FPR)
+  2) Edit: ./rclone.conf  (set BACKUP_ITEMS + GPG_RECIPIENT_FPR)
   3) rclone config   (create/verify the remote)
   4) ./rclone-gpg-cloud-backup.sh
 HLP
 }
 
-INIT_CONFIG="no"; DO_CHECK="no"
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run|--dryrun) DO_DRYRUN="yes"; shift ;;
     --no-retain|--no-retention) DO_RETAIN="no"; shift ;;
-    --config) CONFIG_FILE="${2:-$CONFIG_FILE_DEFAULT}"; shift 2 ;;
+    --config) CONFIG_FILE="${2}"; shift 2 ;;
     --config=*) CONFIG_FILE="${1#*=}"; shift ;;
     --init-config) INIT_CONFIG="yes"; shift ;;
     --check) DO_CHECK="yes"; shift ;;
@@ -101,11 +101,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------- Config handling ----------
-CONFIG_DIR="$(dirname "$CONFIG_FILE")"
-mkdir -p "$CONFIG_DIR"
-
 create_starter_config() {
-  [[ -e "$CONFIG_FILE" ]] && { warn "Config exists: $CONFIG_FILE (not overwriting)"; return 0; }
+  if [[ -e "$CONFIG_FILE" ]]; then
+    warn "Config exists: $CONFIG_FILE (not overwriting)"
+    return 0
+  fi
   cat > "$CONFIG_FILE" <<'CFG'
 ########################################
 # rclone-gpg-cloud-backup – SIMPLE CONFIG
@@ -135,8 +135,16 @@ if [[ "$INIT_CONFIG" == "yes" ]]; then
   exit 0
 fi
 
+# Ensure config exists, otherwise fail fast with a helpful hint
+if [[ ! -f "$CONFIG_FILE" ]]; then
+  err "Config file not found: $CONFIG_FILE
+Hint: run  ./rclone-gpg-cloud-backup.sh --init-config  and then edit $CONFIG_FILE"
+  exit 1
+fi
+
 # Load config (overrides defaults)
-[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
 
 # ---------- Paths & logging (after we know BACKUP_ROOT/LABEL) ----------
 STAMP="$(date +%F_%H-%M-%S)"
@@ -176,7 +184,7 @@ check_deps() {
     warn "ASCII banner tools (toilet/figlet) not found — using text fallback."
   fi
   (( missing == 0 )) || {
-    warn "Install on Debian/Ubuntu:\n  sudo apt update && sudo apt install -y gnupg rclone zstd pigz figlet toilet toilet-fonts"
+    warn "Install on Debian/Ubuntu:\n  sudo apt update && sudo apt install -y tar gnupg rclone zstd pigz figlet toilet toilet-fonts"
     exit 1; }
   ok "Dependencies OK."
 }
