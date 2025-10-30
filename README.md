@@ -64,7 +64,7 @@ sudo nano rclone.conf
 
 After open this file in your text editor (for example `nano`) set:
 - `BACKUP_ITEMS` — which folders/files to back up  
-- `GPG_RECIPIENT_FPR` — your GPG public key fingerprint  
+- `GPG_RECIPIENT_FPR` — your GPG public key fingerprint            # `gpg --list-keys
 - `REMOTE_NAME` — rclone remote name (e.g. onedrive, gdrive, s3)  
 - `REMOTE_DIR` — base folder on cloud storage  
 
