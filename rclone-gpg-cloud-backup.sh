@@ -55,7 +55,7 @@ REMOTE_RETENTION_DAYS="14"
 # ---------- CLI ----------
 DO_DRYRUN="no"; DO_RETAIN="yes"
 CONFIG_FILE_DEFAULT="$HOME/.rclone-gpg-cloud-backup.conf"   # hidden config
-CONFIG_FILE="$CONFIG_FILE_DEFAULT"
+CONFIG_FILE_DEFAULT="$(dirname "$(realpath "$0")")/.rclone.conf"
 
 usage() {
 cat <<'HLP'
