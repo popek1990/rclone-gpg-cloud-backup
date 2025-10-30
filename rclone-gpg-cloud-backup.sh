@@ -1,11 +1,12 @@
+
 #!/usr/bin/env bash
 # ==============================================================================
-# 💾 rclone-gpg-cloud-backup 
+# 💾 rclone-gpg-cloud-backup
 # 🔐 TAR -> GPG encrypt -> rclone upload (OneDrive / GDrive / S3 / any rclone remote)
 # ☁️ Simple, beginner-friendly. Config in a separate hidden file. Ready for cron.
 #                                 Version: 1.0
 # ==============================================================================
-
+CONFIG_FILE=""
 set -euo pipefail
 export LANG=C
 
@@ -173,7 +174,7 @@ check_deps() {
   esac
   if ! command -v toilet >/dev/null 2>&1 && ! command -v figlet >/dev/null 2>&1; then
     warn "ASCII banner tools (toilet/figlet) not found — using text fallback."
-  end
+  fi
   (( missing == 0 )) || {
     warn "Install on Debian/Ubuntu:\n  sudo apt update && sudo apt install -y gnupg rclone zstd pigz figlet toilet toilet-fonts"
     exit 1; }
