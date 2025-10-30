@@ -22,8 +22,7 @@ Uses [rclone](https://rclone.org) + [GPG](https://gnupg.org) to create encrypted
 - Linux with bash  
 - GPG (recipient public key required)  
 - [rclone](https://rclone.org) configured  
-- tar, zstd or pigz/gzip  
-- (Optional) figlet or toilet for banner  
+- tar, zstd or pigz/gzip   
 
 ➡️ Full list is in [`requiraments`](./requiraments)
 
@@ -132,14 +131,14 @@ LABEL="myserver"
 HOST_TAG="$(hostname -s)"
 COMPRESSION="zstd"
 
-GPG_RECIPIENT_FPR="9716963681F20414A4DB3AC3FCCE54124D1A"
+GPG_RECIPIENT_FPR="9KASPA3681F2041TAODB3ACNEPTUNE54124D1A"
 GPG_IMPORT_KEY_FILE=""
 
 REMOTE_NAME="onedrive"
 REMOTE_DIR="Backups"
 
-LOCAL_RETENTION_DAYS="7"
-REMOTE_RETENTION_DAYS="14"
+LOCAL_RETENTION_DAYS="30"
+REMOTE_RETENTION_DAYS="45"
 ```
 
 ---
@@ -179,12 +178,6 @@ REMOTE_RETENTION_DAYS="14"
 
 If you find this project useful — star ⭐ it on GitHub and share it.  
 Pull requests with small improvements (e.g., better logging or new cloud examples) are welcome.
-
----
-
-## 📄 License
-
-_To be added (MIT recommended)_
 
 ---
 
