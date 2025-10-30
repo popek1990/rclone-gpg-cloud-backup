@@ -29,22 +29,30 @@ warn() { echo -e "${C_YELLOW}${S_WARN} $*${C_RESET}"; }
 err()  { echo -e "${C_RED}${S_ERR} $*${C_RESET}"; }
 banner(){ echo -e "\n${C_CYAN}${S_DIV}${S_DIV}${S_DIV} $* ${S_DIV}${S_DIV}${S_DIV}${C_RESET}\n"; }
 
-# ---------- Fancy banner ----------
-print_banner
-echo -e "${C_CYAN}=== ${PROJECT_NAME} ===${C_RESET}"
-echo -e "Host     : ${HOST_TAG}"
-echo -e "Work dir : ${WORK_DIR}"
-echo -e "Log file : ${LOG_FILE}"
-echo -e "Config   : ${CONFIG_FILE}"
+# ---------- Fancy banner (define only; call later) ----------
+print_banner() {
+  local text="$PROJECT_NAME"
+  echo
+  if command -v figlet >/dev/null 2>&1; then
+    (figlet -f slant -w 120 "$text" 2>/dev/null || figlet "$text" 2>/dev/null || true)
+  elif command -v toilet >/dev/null 2>&1; then
+    (toilet -f big "$text" 2>/dev/null || toilet "$text" 2>/dev/null || true)
+  else
+    echo "### $text ###"
+  fi
+  echo "Author : $AUTHOR"
+  echo "Version: $VERSION"
+  echo
+}
 
-# ---------- Paths to script & config (first!) ----------
+# ---------- Paths to script & config (set early) ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CONFIG_FILE_DEFAULT="${SCRIPT_DIR}/rclone.conf"
 CONFIG_FILE="${CONFIG_FILE_DEFAULT}"
 
 # ---------- Defaults (overridden by config) ----------
 BACKUP_ITEMS=( )
-BACKUP_ROOT="${SCRIPT_DIR}/local-work-dir"   # domyślnie w repo/local-work-dir
+BACKUP_ROOT="${SCRIPT_DIR}/local-work-dir"   # default: repo/local-work-dir
 LABEL="project"
 HOST_TAG="$(hostname -s)"
 COMPRESSION="zstd"
@@ -55,10 +63,10 @@ REMOTE_DIR="Backups"
 LOCAL_RETENTION_DAYS="7"
 REMOTE_RETENTION_DAYS="14"
 
-# Behavior toggles
+# Behavior toggles (can be overridden in config)
 KEEP_PLAINTEXT_ARCHIVE="${KEEP_PLAINTEXT_ARCHIVE:-no}"               # delete .tar.* after encrypt
 DELETE_ENCRYPTED_AFTER_UPLOAD="${DELETE_ENCRYPTED_AFTER_UPLOAD:-yes}" # delete .gpg after upload
-DO_VERBOSE="no"  # enable with --verbose
+DO_VERBOSE="${DO_VERBOSE:-no}"                                        # show rclone progress
 
 # ---------- CLI ----------
 DO_DRYRUN="no"; DO_RETAIN="yes"; INIT_CONFIG="no"; DO_CHECK="no"
@@ -255,6 +263,14 @@ fi
 (( ${#BACKUP_ITEMS[@]} > 0 )) || { err "BACKUP_ITEMS is empty. Edit your config: $CONFIG_FILE"; exit 1; }
 RECIPIENT="$(resolve_gpg_recipient)"
 
+# Prepare logging header (call AFTER variables exist)
+print_banner
+echo -e "${C_CYAN}=== ${PROJECT_NAME} ===${C_RESET}"
+echo -e "Host     : ${HOST_TAG}"
+echo -e "Work dir : ${WORK_DIR}"
+echo -e "Log file : ${LOG_FILE}"
+echo -e "Config   : ${CONFIG_FILE}"
+
 # Resolve existing paths
 RESOLVED=()
 for p in "${BACKUP_ITEMS[@]}"; do [[ -e "$p" ]] && RESOLVED+=( "$p" ) || warn "Skipping: $p"; done
@@ -263,7 +279,6 @@ for p in "${BACKUP_ITEMS[@]}"; do [[ -e "$p" ]] && RESOLVED+=( "$p" ) || warn "S
 # Classify & prepare
 TO_ENCRYPT=()          # final list of source files to encrypt (no directories)
 GEN_ARCHIVES=()        # plaintext archives we created (safe to delete later)
-i=0
 
 for item in "${RESOLVED[@]}"; do
   if [[ -d "$item" ]]; then
@@ -289,7 +304,6 @@ for item in "${RESOLVED[@]}"; do
   else
     warn "Skipping unknown type: $item"
   fi
-  i=$((i+1))
 done
 
 # Encrypt & upload each
