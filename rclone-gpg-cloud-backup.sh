@@ -29,25 +29,14 @@ warn() { echo -e "${C_YELLOW}${S_WARN} $*${C_RESET}"; }
 err()  { echo -e "${C_RED}${S_ERR} $*${C_RESET}"; }
 banner(){ echo -e "\n${C_CYAN}${S_DIV}${S_DIV}${S_DIV} $* ${S_DIV}${S_DIV}${S_DIV}${C_RESET}\n"; }
 
-# ---------- Fancy banner ----------
-print_banner() {
-  local text="$PROJECT_NAME"
-  echo
-  if command -v figlet >/dev/null 2>&1; then
-    (figlet -f slant -w 120 "$text" 2>/dev/null || figlet "$text" 2>/dev/null || true)
-  elif command -v toilet >/dev/null 2>&1; then
-    (toilet -f big "$text" 2>/dev/null || toilet "$text" 2>/dev/null || true)
-  else
-    echo "### $text ###"
-  fi
-  echo "Author : $AUTHOR"
-  echo "Version: $VERSION"
-  echo
-}
+# ---------- Paths to script & config (first!) ----------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+CONFIG_FILE_DEFAULT="${SCRIPT_DIR}/rclone.conf"
+CONFIG_FILE="${CONFIG_FILE_DEFAULT}"
 
 # ---------- Defaults (overridden by config) ----------
 BACKUP_ITEMS=( )
-BACKUP_ROOT="${HOME}/cloud-backup"
+BACKUP_ROOT="${SCRIPT_DIR}/local-work-dir"   # domyślnie w repo/local-work-dir
 LABEL="project"
 HOST_TAG="$(hostname -s)"
 COMPRESSION="zstd"
@@ -59,14 +48,9 @@ LOCAL_RETENTION_DAYS="7"
 REMOTE_RETENTION_DAYS="14"
 
 # Behavior toggles
-KEEP_PLAINTEXT_ARCHIVE="${KEEP_PLAINTEXT_ARCHIVE:-no}"             # delete .tar.* after encrypt
+KEEP_PLAINTEXT_ARCHIVE="${KEEP_PLAINTEXT_ARCHIVE:-no}"               # delete .tar.* after encrypt
 DELETE_ENCRYPTED_AFTER_UPLOAD="${DELETE_ENCRYPTED_AFTER_UPLOAD:-yes}" # delete .gpg after upload
 DO_VERBOSE="no"  # enable with --verbose
-
-# ---------- Paths to script & config ----------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-CONFIG_FILE_DEFAULT="${SCRIPT_DIR}/rclone.conf"
-CONFIG_FILE="${CONFIG_FILE_DEFAULT}"
 
 # ---------- CLI ----------
 DO_DRYRUN="no"; DO_RETAIN="yes"; INIT_CONFIG="no"; DO_CHECK="no"
@@ -116,7 +100,6 @@ create_starter_config() {
 # Absolute paths (array)
 BACKUP_ITEMS=( "/root/testfile.txt" )
 
-BACKUP_ROOT="$HOME/cloud-backup"
 LABEL="short-label"
 HOST_TAG="$(hostname -s)"
 COMPRESSION="zstd"
@@ -150,6 +133,7 @@ mkdir -p "$WORK_DIR"
 LOG_FILE="${WORK_DIR}/${LABEL}_cloud_backup_${STAMP}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
+# ---------- Fancy banner ----------
 print_banner
 echo -e "${C_CYAN}=== ${PROJECT_NAME} ===${C_RESET}"
 echo -e "Host     : ${HOST_TAG}"
@@ -205,7 +189,6 @@ compress_make(){
   local out="$1"; shift
   local items=( "$@" )
   info "Items to include: ${#items[@]}"
-  # Store absolute paths (no 'Removing leading /' message), be quiet (no -v)
   case "$COMPRESSION" in
     zstd) tar -P -I 'zstd -19' -cf "$out" "${items[@]}" ;;
     gz)   if command -v pigz >/dev/null 2>&1; then tar -P -I 'pigz -9' -cf "$out" "${items[@]}"; else tar -P -czf "$out" "${items[@]}"; fi ;;
@@ -214,7 +197,7 @@ compress_make(){
 }
 
 encrypt_gpg(){
-  local in="$1"; local rcpt="$2"; local out="$3"  # allow explicit output path
+  local in="$1"; local rcpt="$2"; local out="$3"
   { banner "Encrypting archive"; info "Recipient: ${rcpt}"; } >&2
   gpg --yes --batch --trust-model always --encrypt -r "$rcpt" -o "$out" "$in" >&2
   { ok "Encrypted: $out"; } >&2
@@ -224,7 +207,7 @@ encrypt_gpg(){
 upload_remote(){
   banner "Uploading to cloud"
   local file="$1"
-  # New structure: REMOTE_DIR / HOST_TAG / LABEL / YYYY-MM-DD
+  # Cloud path: REMOTE_DIR / HOST_TAG / LABEL / YYYY-MM-DD
   local dest="${REMOTE_NAME}:${REMOTE_DIR}/${HOST_TAG}/${LABEL}/${DAY_DIR}/"
   info "Remote path: $dest"
   if [[ "$DO_VERBOSE" == "yes" ]]; then
@@ -270,7 +253,6 @@ if [[ "$DO_CHECK" == "yes" ]]; then
 fi
 
 (( ${#BACKUP_ITEMS[@]} > 0 )) || { err "BACKUP_ITEMS is empty. Edit your config: $CONFIG_FILE"; exit 1; }
-
 RECIPIENT="$(resolve_gpg_recipient)"
 
 # Resolve existing paths
@@ -278,57 +260,62 @@ RESOLVED=()
 for p in "${BACKUP_ITEMS[@]}"; do [[ -e "$p" ]] && RESOLVED+=( "$p" ) || warn "Skipping: $p"; done
 (( ${#RESOLVED[@]} > 0 )) || { err "No valid BACKUP_ITEMS after filtering. Fix paths in config."; exit 1; }
 
-# Decide compression strategy
-SKIP_COMPRESS="no"
-SRC_ARCHIVE=""
+# Classify & prepare
+TO_ENCRYPT=()          # final list of source files to encrypt (no directories)
+GEN_ARCHIVES=()        # plaintext archives we created (safe to delete later)
+i=0
 
-if (( ${#RESOLVED[@]} == 1 )) && is_precompressed "${RESOLVED[0]}"; then
-  SKIP_COMPRESS="yes"
-  SRC_ARCHIVE="${RESOLVED[0]}"
-  info "Pre-compressed file detected; skipping compression: ${SRC_ARCHIVE}"
-fi
-
-# Compression helpers
-case "$COMPRESSION" in
-  zstd) EXT="tar.zst"; LIST_CMD=(tar -I zstd -tf) ;;
-  gz)   EXT="tar.gz";  LIST_CMD=(tar -tzf) ;;
-esac
-
-# Build or reuse archive
-ARCHIVE=""
-if [[ "$SKIP_COMPRESS" == "yes" ]]; then
-  ARCHIVE="$SRC_ARCHIVE"
-else
-  ARCHIVE="${WORK_DIR}/${LABEL}_backup_${STAMP}.${EXT}"
-  compress_make "$ARCHIVE" "${RESOLVED[@]}"
-  if [[ "$DO_VERBOSE" == "yes" ]]; then
-    banner "Archive quick test"
-    du -h "$ARCHIVE" || true
-    "${LIST_CMD[@]}" "$ARCHIVE" 2>/dev/null | head -n 10 || true
+for item in "${RESOLVED[@]}"; do
+  if [[ -d "$item" ]]; then
+    # Pack this directory only, then encrypt
+    case "$COMPRESSION" in
+      zstd) EXT="tar.zst"; LIST_CMD=(tar -I zstd -tf) ;;
+      gz)   EXT="tar.gz";  LIST_CMD=(tar -tzf) ;;
+    esac
+    base="$(basename "$item")"
+    ARCHIVE="${WORK_DIR}/${LABEL}_${base}_${STAMP}.${EXT}"
+    compress_make "$ARCHIVE" "$item"
+    [[ "$DO_VERBOSE" == "yes" ]] && { banner "Archive quick test"; du -h "$ARCHIVE" || true; "${LIST_CMD[@]}" "$ARCHIVE" 2>/dev/null | head -n 10 || true; }
+    TO_ENCRYPT+=( "$ARCHIVE" )
+    GEN_ARCHIVES+=( "$ARCHIVE" )
+  elif [[ -f "$item" ]]; then
+    if is_precompressed "$item"; then
+      info "Pre-compressed file detected; will encrypt as-is: $item"
+      TO_ENCRYPT+=( "$item" )
+    else
+      info "Plain file detected; will encrypt as-is (no tar): $item"
+      TO_ENCRYPT+=( "$item" )
+    fi
+  else
+    warn "Skipping unknown type: $item"
   fi
-fi
+  i=$((i+1))
+done
 
-# Encrypt to WORK_DIR (single copy)
-ENC_BASENAME="$(basename "$ARCHIVE").gpg"
-ENC_PATH="${WORK_DIR}/${ENC_BASENAME}"
-ENC_PATH="$(encrypt_gpg "$ARCHIVE" "$RECIPIENT" "$ENC_PATH")"
-
-# Remove plaintext tar unless user asked to keep, but do not delete user’s own precompressed source
-if [[ "$SKIP_COMPRESS" == "no" && "$KEEP_PLAINTEXT_ARCHIVE" != "yes" ]]; then
-  info "Removing plaintext archive: $ARCHIVE"; rm -f -- "$ARCHIVE" || true
-fi
-
-# Upload (quiet by default)
+# Encrypt & upload each
 REMOTE_PATH=""
-if [[ "$DO_DRYRUN" == "yes" ]]; then
-  banner "Dry-run: upload skipped"
-else
-  has_remote || { err "Remote '${REMOTE_NAME}' not found. Run: rclone config"; exit 1; }
-  REMOTE_PATH="$(upload_remote "$ENC_PATH")"
-  if [[ "$DELETE_ENCRYPTED_AFTER_UPLOAD" == "yes" ]]; then
-    info "Removing local encrypted file after upload: $ENC_PATH"
-    rm -f -- "$ENC_PATH" || true
+for src in "${TO_ENCRYPT[@]}"; do
+  ENC_OUT="${WORK_DIR}/$(basename "$src").gpg"
+  ONE_ENC="$(encrypt_gpg "$src" "$RECIPIENT" "$ENC_OUT")"
+
+  if [[ "$DO_DRYRUN" == "yes" ]]; then
+    banner "Dry-run: upload skipped"
+  else
+    has_remote || { err "Remote '${REMOTE_NAME}' not found. Run: rclone config"; exit 1; }
+    REMOTE_PATH="$(upload_remote "$ONE_ENC")"
+    if [[ "$DELETE_ENCRYPTED_AFTER_UPLOAD" == "yes" ]]; then
+      info "Removing local encrypted file after upload: $ONE_ENC"
+      rm -f -- "$ONE_ENC" || true
+    fi
   fi
+done
+
+# Delete only archives we created ourselves (never user originals)
+if [[ "$KEEP_PLAINTEXT_ARCHIVE" != "yes" && ${#GEN_ARCHIVES[@]} -gt 0 ]]; then
+  for a in "${GEN_ARCHIVES[@]}"; do
+    info "Removing plaintext archive: $a"
+    rm -f -- "$a" || true
+  done
 fi
 
 retention_local
@@ -341,7 +328,5 @@ echo "  Author  : ${AUTHOR}"
 echo "  Version : ${VERSION}"
 echo "  Host    : ${HOST_TAG}"
 echo "  Items   : ${#RESOLVED[@]}"
-[[ -f "$ARCHIVE" ]]   && echo "  Archive : ${ARCHIVE}"
-[[ -f "$ENC_PATH" ]]  && echo "  Encrypted: ${ENC_PATH}"
-[[ -n "${REMOTE_PATH:-}" ]] && echo "  Uploaded: ${REMOTE_PATH}"
+[[ -n "${REMOTE_PATH:-}" ]] && echo "  Last upload: ${REMOTE_PATH}"
 echo "  Log     : ${LOG_FILE}"
