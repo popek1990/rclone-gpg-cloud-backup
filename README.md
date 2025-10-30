@@ -49,10 +49,10 @@ Install all system dependencies automatically from the included list:
 
 ```bash
 sudo apt update
-xargs -a requiraments sudo apt install -y
+grep -v '^#' requirements.txt | xargs -r sudo apt install -y
 ```
 
-If rclone was not installed or is outdated, use the official installer:
++ rclone last version / official installer:
 
 `curl https://rclone.org/install.sh | sudo bash`
 
