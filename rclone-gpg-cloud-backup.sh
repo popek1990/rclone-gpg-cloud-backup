@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# 💾 rclone-gpg-cloud-backup
-# 🔐 TAR -> GPG encrypt -> rclone upload (OneDrive / GDrive / S3 / any rclone remote)
-# ☁️ Simple, beginner-friendly. Config file lives next to this script: ./rclone.conf
-#                                 Version: 1.0
+# rclone-gpg-cloud-backup
+# TAR -> GPG encrypt -> rclone upload (OneDrive / GDrive / S3 / any rclone remote)
+# Simple, beginner-friendly. Config file lives next to this script: ./rclone.conf
+# Version: 1.0
 # ==============================================================================
 
 set -euo pipefail
@@ -12,17 +12,17 @@ export LANG=C
 VERSION="1.0"
 PROJECT_NAME="rclone-gpg-cloud-backup"
 
-# ---------- Colors ----------
+# ---------- Colors (kept minimal & ASCII-safe) ----------
 if command -v tput >/dev/null 2>&1 && [ -t 1 ]; then
   C_GREEN=$(tput setaf 2); C_YELLOW=$(tput setaf 3); C_RED=$(tput setaf 1); C_CYAN=$(tput setaf 6); C_RESET=$(tput sgr0)
 else
   C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_RESET=""
 fi
-ok()   { echo -e "${C_GREEN}✅ $*${C_RESET}"; }
-info() { echo -e "${C_CYAN}ℹ️  $*${C_RESET}"; }
-warn() { echo -e "${C_YELLOW}⚠️  $*${C_RESET}"; }
-err()  { echo -e "${C_RED}❌ $*${C_RESET}"; }
-banner(){ echo -e "\n${C_CYAN}——— $* ———${C_RESET}\n"; }
+ok()   { echo -e "${C_GREEN}[OK]    $*${C_RESET}"; }
+info() { echo -e "${C_CYAN}[INFO]  $*${C_RESET}"; }
+warn() { echo -e "${C_YELLOW}[WARN]  $*${C_RESET}"; }
+err()  { echo -e "${C_RED}[ERROR] $*${C_RESET}"; }
+banner(){ echo -e "\n${C_CYAN}--- $* ---${C_RESET}\n"; }
 
 # ---------- ASCII banner (optional; never blocks) ----------
 print_banner() {
@@ -77,12 +77,6 @@ Options:
   --init-config    Create a starter config file and exit (won't overwrite).
   --check          Only check deps/config/GPG/rclone and exit.
   --version        Print version and exit.
-
-Quick start:
-  1) ./rclone-gpg-cloud-backup.sh --init-config
-  2) Edit: ./rclone.conf  (set BACKUP_ITEMS + GPG_RECIPIENT_FPR)
-  3) rclone config   (create/verify the remote)
-  4) ./rclone-gpg-cloud-backup.sh
 HLP
 }
 
@@ -112,18 +106,32 @@ create_starter_config() {
 # Edit these lines before first run.
 ########################################
 
+# Absolute paths (array, even for a single item)
 BACKUP_ITEMS=( )
+
+# Local workspace for archives & logs
 BACKUP_ROOT="$HOME/cloud-backup"
+
+# Short label for filenames
 LABEL="project"
+
+# Host tag in remote path
 HOST_TAG="$(hostname -s)"
+
+# Compression: zstd or gz
 COMPRESSION="zstd"
 
+# --- GPG ---
+# Required: recipient public key fingerprint
 GPG_RECIPIENT_FPR=""
+# Optional: path to public key file to import once
 GPG_IMPORT_KEY_FILE=""
 
+# --- rclone ---
 REMOTE_NAME="onedrive"
 REMOTE_DIR="Backups"
 
+# --- Retention (0 disables) ---
 LOCAL_RETENTION_DAYS="7"
 REMOTE_RETENTION_DAYS="14"
 CFG
@@ -135,25 +143,22 @@ if [[ "$INIT_CONFIG" == "yes" ]]; then
   exit 0
 fi
 
-# Ensure config exists, otherwise fail fast with a helpful hint
 if [[ ! -f "$CONFIG_FILE" ]]; then
   err "Config file not found: $CONFIG_FILE
 Hint: run  ./rclone-gpg-cloud-backup.sh --init-config  and then edit $CONFIG_FILE"
   exit 1
 fi
 
-# Load config (overrides defaults)
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
-# ---------- Paths & logging (after we know BACKUP_ROOT/LABEL) ----------
+# ---------- Paths & logging ----------
 STAMP="$(date +%F_%H-%M-%S)"
 DAY_DIR="$(date +%F)"
 WORK_DIR="${BACKUP_ROOT}/${DAY_DIR}"
 mkdir -p "$WORK_DIR"
 
 LOG_FILE="${WORK_DIR}/${LABEL}_cloud_backup_${STAMP}.log"
-# Start logging now (avoid odd buffering)
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 print_banner
@@ -201,24 +206,27 @@ safe_gpg_list_keys() {
 }
 
 resolve_gpg_recipient() {
-  banner "GPG setup"
-  export GPG_TTY="${GPG_TTY:-$(tty 2>/dev/null || echo "")}"
-  if [[ -n "${GPG_IMPORT_KEY_FILE}" && -f "${GPG_IMPORT_KEY_FILE}" ]]; then
-    info "Importing public key: ${GPG_IMPORT_KEY_FILE}"
-    gpg --batch --import "${GPG_IMPORT_KEY_FILE}" || { err "GPG import failed."; exit 1; }
-  fi
-  [[ -n "${GPG_RECIPIENT_FPR}" ]] || { err "GPG_RECIPIENT_FPR is empty. Set it in the config file."; exit 1; }
+  # All logs to stderr, only the fingerprint to stdout
+  {
+    banner "GPG setup"
+    export GPG_TTY="${GPG_TTY:-$(tty 2>/dev/null || echo "")}"
+    if [[ -n "${GPG_IMPORT_KEY_FILE}" && -f "${GPG_IMPORT_KEY_FILE}" ]]; then
+      info "Importing public key: ${GPG_IMPORT_KEY_FILE}"
+      gpg --batch --import "${GPG_IMPORT_KEY_FILE}" || { err "GPG import failed."; exit 1; }
+    fi
+    [[ -n "${GPG_RECIPIENT_FPR}" ]] || { err "GPG_RECIPIENT_FPR is empty. Set it in the config file."; exit 1; }
 
-  if safe_gpg_list_keys | awk -F: '/^fpr:/ {print $10}' | grep -Fxq "$GPG_RECIPIENT_FPR"; then
-    info "Using GPG fingerprint: ${GPG_RECIPIENT_FPR}"
-    echo "${GPG_RECIPIENT_FPR}"
-  else
-    err "Fingerprint not found in keyring: ${GPG_RECIPIENT_FPR}
+    if safe_gpg_list_keys | awk -F: '/^fpr:/ {print $10}' | grep -Fxq "$GPG_RECIPIENT_FPR"; then
+      info "Using GPG fingerprint: ${GPG_RECIPIENT_FPR}"
+    else
+      err "Fingerprint not found in keyring: ${GPG_RECIPIENT_FPR}
 Tip:
   gpg --export -a 'you@example.com' > public.asc
   gpg --import /path/to/public.asc"
-    exit 1
-  fi
+      exit 1
+    fi
+  } >&2
+  printf '%s\n' "$GPG_RECIPIENT_FPR"
 }
 
 compress_make(){
@@ -238,12 +246,11 @@ compress_make(){
 }
 
 encrypt_gpg(){
-  banner "Encrypting archive"
   local in="$1"; local rcpt="$2"; local out="${in}.gpg"
-  info "Recipient: ${rcpt}"
-  gpg --yes --batch --trust-model always --encrypt -r "$rcpt" -o "$out" "$in"
-  ok "Encrypted: $out"
-  echo "$out"
+  { banner "Encrypting archive"; info "Recipient: ${rcpt}"; } >&2
+  gpg --yes --batch --trust-model always --encrypt -r "$rcpt" -o "$out" "$in" >&2
+  { ok "Encrypted: $out"; } >&2
+  printf '%s\n' "$out"
 }
 
 upload_remote(){
