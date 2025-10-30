@@ -2,7 +2,7 @@
 # ==============================================================================
 # rClone GPG Cloud Backup  – by popek1990.eth
 # TAR -> GPG encrypt -> rclone upload (OneDrive / GDrive / S3 / any rclone remote)
-# Simple, beginner-friendly. Config file lives next to this script: ./rclone.conf
+# Config file lives next to this script: ./rclone.conf
 # Version: 1.0
 # ==============================================================================
 
@@ -12,7 +12,7 @@ VERSION="1.0"
 PROJECT_NAME="rClone GPG Cloud Backup"
 AUTHOR="popek1990.eth"
 
-# ---------- UTF-8 detection (emoji on UTF-8 only) ----------
+# ---------- UTF-8 detection (emoji only on UTF-8 terminals) ----------
 is_utf8() { (locale charmap 2>/dev/null || echo "") | grep -qi 'UTF-8'; }
 
 if is_utf8 && command -v tput >/dev/null 2>&1 && [ -t 1 ]; then
@@ -33,10 +33,10 @@ banner(){ echo -e "\n${C_CYAN}${S_DIV}${S_DIV}${S_DIV} $* ${S_DIV}${S_DIV}${S_DI
 print_banner() {
   local text="$PROJECT_NAME"
   echo
-  if command -v toilet >/dev/null 2>&1; then
-    (toilet -f future "$text" 2>/dev/null || toilet "$text" 2>/dev/null || true)
-  elif command -v figlet >/dev/null 2>&1; then
-    (figlet -w 120 "$text" 2>/dev/null || true)
+  if command -v figlet >/dev/null 2>&1; then
+    (figlet -f slant -w 120 "$text" 2>/dev/null || figlet "$text" 2>/dev/null || true)
+  elif command -v toilet >/dev/null 2>&1; then
+    (toilet -f big "$text" 2>/dev/null || toilet "$text" 2>/dev/null || true)
   else
     echo "### $text ###"
   fi
@@ -45,7 +45,7 @@ print_banner() {
   echo
 }
 
-# ---------- Defaults (can be overridden by config) ----------
+# ---------- Defaults (overridden by config) ----------
 BACKUP_ITEMS=( )
 BACKUP_ROOT="${HOME}/cloud-backup"
 LABEL="project"
@@ -58,10 +58,10 @@ REMOTE_DIR="Backups"
 LOCAL_RETENTION_DAYS="7"
 REMOTE_RETENTION_DAYS="14"
 
-# Behavior
-KEEP_PLAINTEXT_ARCHIVE="${KEEP_PLAINTEXT_ARCHIVE:-no}"   # delete .tar.* after encryption
-DELETE_ENCRYPTED_AFTER_UPLOAD="${DELETE_ENCRYPTED_AFTER_UPLOAD:-yes}"  # delete .gpg after successful upload
-DO_VERBOSE="no"  # enable with --verbose for rclone progress
+# Behavior toggles
+KEEP_PLAINTEXT_ARCHIVE="${KEEP_PLAINTEXT_ARCHIVE:-no}"             # delete .tar.* after encrypt
+DELETE_ENCRYPTED_AFTER_UPLOAD="${DELETE_ENCRYPTED_AFTER_UPLOAD:-yes}" # delete .gpg after upload
+DO_VERBOSE="no"  # enable with --verbose
 
 # ---------- Paths to script & config ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -82,7 +82,7 @@ Options:
   --config FILE    Use specific config file (default: ./rclone.conf).
   --init-config    Create a starter config file and exit (won't overwrite).
   --check          Only check deps/config/GPG/rclone and exit.
-  --verbose        Show rclone progress (good for manual runs).
+  --verbose        Show rclone/tar extra info (good for manual runs).
   --version        Print version and exit.
 HLP
 }
@@ -105,8 +105,7 @@ done
 # ---------- Config handling ----------
 create_starter_config() {
   if [[ -e "$CONFIG_FILE" ]]; then
-    warn "Config exists: $CONFIG_FILE (not overwriting)"
-    return 0
+    warn "Config exists: $CONFIG_FILE (not overwriting)"; return 0
   fi
   cat > "$CONFIG_FILE" <<'CFG'
 ########################################
@@ -137,16 +136,8 @@ CFG
   ok "Starter config created at: $CONFIG_FILE"
 }
 
-if [[ "$INIT_CONFIG" == "yes" ]]; then
-  create_starter_config; exit 0
-fi
-
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  err "Config file not found: $CONFIG_FILE
-Hint: run  ./rclone-gpg-cloud-backup.sh --init-config  and then edit $CONFIG_FILE"
-  exit 1
-fi
-
+if [[ "$INIT_CONFIG" == "yes" ]]; then create_starter_config; exit 0; fi
+[[ -f "$CONFIG_FILE" ]] || { err "Config not found: $CONFIG_FILE. Run --init-config"; exit 1; }
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
 
@@ -178,16 +169,19 @@ check_deps() {
     gz)   command -v pigz >/dev/null 2>&1 || need gzip || missing=1 ;;
     *)    err "Unsupported COMPRESSION=${COMPRESSION} (use zstd|gz)"; missing=1 ;;
   esac
-  if ! command -v toilet >/dev/null 2>&1 && ! command -v figlet >/dev/null 2>&1; then
-    warn "ASCII banner tools (toilet/figlet) not found — using text fallback."
-  fi
-  (( missing == 0 )) || { warn "Install on Debian/Ubuntu:\n  sudo apt update && sudo apt install -y tar gnupg rclone zstd pigz figlet toilet toilet-fonts"; exit 1; }
+  (( missing == 0 )) || { warn "Install: sudo apt update && sudo apt install -y tar gnupg rclone zstd pigz"; exit 1; }
   ok "Dependencies OK."
 }
 
 has_remote(){ rclone listremotes | grep -q "^${REMOTE_NAME}:"; }
 
-# Avoid gpg-agent/pinentry hangs: always --batch, short timeout for listing
+# Compressed/archival extensions
+is_precompressed() {
+  local f="${1##*/}"; f="${f,,}"
+  [[ -f "$1" ]] && [[ "$f" =~ \.(tar\.zst|tar\.gz|tgz|tar\.xz|tar\.bz2|zst|gz|xz|bz2|zip|rar|7z|tar)$ ]]
+}
+
+# Avoid gpg-agent/pinentry hangs
 safe_gpg_list_keys() {
   if command -v timeout >/dev/null 2>&1; then timeout 8s gpg --batch --list-keys --with-colons 2>/dev/null || true
   else gpg --batch --list-keys --with-colons 2>/dev/null || true; fi
@@ -201,9 +195,7 @@ resolve_gpg_recipient() {
     { info "Using GPG fingerprint: ${GPG_RECIPIENT_FPR}"; } >&2
   else
     { err "Fingerprint not found in keyring: ${GPG_RECIPIENT_FPR}
-Tip:
-  gpg --export -a 'you@example.com' > public.asc
-  gpg --import /path/to/public.asc"; exit 1; } >&2
+Tip: gpg --export -a 'you@example.com' > public.asc && gpg --import public.asc"; exit 1; } >&2
   fi
   printf '%s\n' "$GPG_RECIPIENT_FPR"
 }
@@ -213,16 +205,16 @@ compress_make(){
   local out="$1"; shift
   local items=( "$@" )
   info "Items to include: ${#items[@]}"
-  for p in "${items[@]}"; do [[ -e "$p" ]] || warn "Missing: $p"; done
+  # Store absolute paths (no 'Removing leading /' message), be quiet (no -v)
   case "$COMPRESSION" in
-    zstd) tar -I 'zstd -19' -cvf "$out" "${items[@]}" ;;
-    gz)   if command -v pigz >/dev/null 2>&1; then tar -I 'pigz -9' -cvf "$out" "${items[@]}"; else tar -czvf "$out" "${items[@]}"; fi ;;
+    zstd) tar -P -I 'zstd -19' -cf "$out" "${items[@]}" ;;
+    gz)   if command -v pigz >/dev/null 2>&1; then tar -P -I 'pigz -9' -cf "$out" "${items[@]}"; else tar -P -czf "$out" "${items[@]}"; fi ;;
   esac
   ok "Archive ready: $out"
 }
 
 encrypt_gpg(){
-  local in="$1"; local rcpt="$2"; local out="${in}.gpg"
+  local in="$1"; local rcpt="$2"; local out="$3"  # allow explicit output path
   { banner "Encrypting archive"; info "Recipient: ${rcpt}"; } >&2
   gpg --yes --batch --trust-model always --encrypt -r "$rcpt" -o "$out" "$in" >&2
   { ok "Encrypted: $out"; } >&2
@@ -232,7 +224,8 @@ encrypt_gpg(){
 upload_remote(){
   banner "Uploading to cloud"
   local file="$1"
-  local dest="${REMOTE_NAME}:${REMOTE_DIR}/${LABEL}/${HOST_TAG}/${DAY_DIR}/"
+  # New structure: REMOTE_DIR / HOST_TAG / LABEL / YYYY-MM-DD
+  local dest="${REMOTE_NAME}:${REMOTE_DIR}/${HOST_TAG}/${LABEL}/${DAY_DIR}/"
   info "Remote path: $dest"
   if [[ "$DO_VERBOSE" == "yes" ]]; then
     rclone copy "$file" "$dest" --progress --stats-one-line-date --human-readable
@@ -244,8 +237,8 @@ upload_remote(){
 }
 
 retention_local(){
-  [[ "$DO_RETAIN" == "yes" ]] || { info "Local retention skipped (--no-retain)."; return 0; }
-  (( LOCAL_RETENTION_DAYS > 0 )) || { info "Local retention disabled (0d)."; return 0; }
+  [[ "$DO_RETAIN" == "yes" ]] || return 0
+  (( LOCAL_RETENTION_DAYS > 0 )) || return 0
   banner "Local retention"
   info "Deleting *.gpg older than ${LOCAL_RETENTION_DAYS}d under ${BACKUP_ROOT}"
   find "${BACKUP_ROOT}" -type f -name "*.gpg" -mtime +${LOCAL_RETENTION_DAYS} -print -delete || true
@@ -253,10 +246,10 @@ retention_local(){
 }
 
 retention_remote(){
-  [[ "$DO_RETAIN" == "yes" ]] || { info "Remote retention skipped (--no-retain)."; return 0; }
-  (( REMOTE_RETENTION_DAYS > 0 )) || { info "Remote retention disabled (0d)."; return 0; }
+  [[ "$DO_RETAIN" == "yes" ]] || return 0
+  (( REMOTE_RETENTION_DAYS > 0 )) || return 0
   banner "Remote retention"
-  local base="${REMOTE_NAME}:${REMOTE_DIR}/${LABEL}/${HOST_TAG}"
+  local base="${REMOTE_NAME}:${REMOTE_DIR}/${HOST_TAG}/${LABEL}"
   info "Pruning files older than ${REMOTE_RETENTION_DAYS}d in ${base}"
   rclone delete "${base}" --min-age "${REMOTE_RETENTION_DAYS}d" || true
   rclone rmdirs "${base}" || true
@@ -273,22 +266,27 @@ if [[ "$DO_CHECK" == "yes" ]]; then
   [[ -n "$GPG_RECIPIENT_FPR" ]] || err "GPG_RECIPIENT_FPR is empty."
   has_remote && ok "rclone remote '${REMOTE_NAME}' found." || warn "rclone remote '${REMOTE_NAME}' NOT found."
   resolve_gpg_recipient >/dev/null
-  ok "Check finished."
-  exit 0
+  ok "Check finished."; exit 0
 fi
 
-# Fail fast for beginners
-if (( ${#BACKUP_ITEMS[@]} == 0 )); then
-  err "BACKUP_ITEMS is empty. Edit your config: $CONFIG_FILE"
-  exit 1
-fi
+(( ${#BACKUP_ITEMS[@]} > 0 )) || { err "BACKUP_ITEMS is empty. Edit your config: $CONFIG_FILE"; exit 1; }
 
 RECIPIENT="$(resolve_gpg_recipient)"
 
-# Filter missing paths
+# Resolve existing paths
 RESOLVED=()
 for p in "${BACKUP_ITEMS[@]}"; do [[ -e "$p" ]] && RESOLVED+=( "$p" ) || warn "Skipping: $p"; done
 (( ${#RESOLVED[@]} > 0 )) || { err "No valid BACKUP_ITEMS after filtering. Fix paths in config."; exit 1; }
+
+# Decide compression strategy
+SKIP_COMPRESS="no"
+SRC_ARCHIVE=""
+
+if (( ${#RESOLVED[@]} == 1 )) && is_precompressed "${RESOLVED[0]}"; then
+  SKIP_COMPRESS="yes"
+  SRC_ARCHIVE="${RESOLVED[0]}"
+  info "Pre-compressed file detected; skipping compression: ${SRC_ARCHIVE}"
+fi
 
 # Compression helpers
 case "$COMPRESSION" in
@@ -296,21 +294,32 @@ case "$COMPRESSION" in
   gz)   EXT="tar.gz";  LIST_CMD=(tar -tzf) ;;
 esac
 
-ARCHIVE="${WORK_DIR}/${LABEL}_backup_${STAMP}.${EXT}"
-ENC_PATH=""; REMOTE_PATH=""
-
-compress_make "$ARCHIVE" "${RESOLVED[@]}"
-banner "Archive quick test"
-du -h "$ARCHIVE" || true
-"${LIST_CMD[@]}" "$ARCHIVE" 2>/dev/null | head -n 10 || true
-
-# Encrypt -> optionally delete plaintext tar
-ENC_PATH="$(encrypt_gpg "$ARCHIVE" "$RECIPIENT")"
-if [[ "$KEEP_PLAINTEXT_ARCHIVE" != "yes" ]]; then
-  info "Removing plaintext archive: $ARCHIVE"
-  rm -f -- "$ARCHIVE" || true
+# Build or reuse archive
+ARCHIVE=""
+if [[ "$SKIP_COMPRESS" == "yes" ]]; then
+  ARCHIVE="$SRC_ARCHIVE"
+else
+  ARCHIVE="${WORK_DIR}/${LABEL}_backup_${STAMP}.${EXT}"
+  compress_make "$ARCHIVE" "${RESOLVED[@]}"
+  if [[ "$DO_VERBOSE" == "yes" ]]; then
+    banner "Archive quick test"
+    du -h "$ARCHIVE" || true
+    "${LIST_CMD[@]}" "$ARCHIVE" 2>/dev/null | head -n 10 || true
+  fi
 fi
 
+# Encrypt to WORK_DIR (single copy)
+ENC_BASENAME="$(basename "$ARCHIVE").gpg"
+ENC_PATH="${WORK_DIR}/${ENC_BASENAME}"
+ENC_PATH="$(encrypt_gpg "$ARCHIVE" "$RECIPIENT" "$ENC_PATH")"
+
+# Remove plaintext tar unless user asked to keep, but do not delete user’s own precompressed source
+if [[ "$SKIP_COMPRESS" == "no" && "$KEEP_PLAINTEXT_ARCHIVE" != "yes" ]]; then
+  info "Removing plaintext archive: $ARCHIVE"; rm -f -- "$ARCHIVE" || true
+fi
+
+# Upload (quiet by default)
+REMOTE_PATH=""
 if [[ "$DO_DRYRUN" == "yes" ]]; then
   banner "Dry-run: upload skipped"
 else
@@ -332,7 +341,7 @@ echo "  Author  : ${AUTHOR}"
 echo "  Version : ${VERSION}"
 echo "  Host    : ${HOST_TAG}"
 echo "  Items   : ${#RESOLVED[@]}"
-echo "  Archive : ${ARCHIVE}"
-echo "  Encrypted: ${ENC_PATH:-<skipped>}"
-[[ -n "${REMOTE_PATH:-}" ]] && echo "  Remote  : ${REMOTE_PATH}"
+[[ -f "$ARCHIVE" ]]   && echo "  Archive : ${ARCHIVE}"
+[[ -f "$ENC_PATH" ]]  && echo "  Encrypted: ${ENC_PATH}"
+[[ -n "${REMOTE_PATH:-}" ]] && echo "  Uploaded: ${REMOTE_PATH}"
 echo "  Log     : ${LOG_FILE}"
