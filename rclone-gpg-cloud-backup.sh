@@ -29,6 +29,14 @@ warn() { echo -e "${C_YELLOW}${S_WARN} $*${C_RESET}"; }
 err()  { echo -e "${C_RED}${S_ERR} $*${C_RESET}"; }
 banner(){ echo -e "\n${C_CYAN}${S_DIV}${S_DIV}${S_DIV} $* ${S_DIV}${S_DIV}${S_DIV}${C_RESET}\n"; }
 
+# ---------- Fancy banner ----------
+print_banner
+echo -e "${C_CYAN}=== ${PROJECT_NAME} ===${C_RESET}"
+echo -e "Host     : ${HOST_TAG}"
+echo -e "Work dir : ${WORK_DIR}"
+echo -e "Log file : ${LOG_FILE}"
+echo -e "Config   : ${CONFIG_FILE}"
+
 # ---------- Paths to script & config (first!) ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CONFIG_FILE_DEFAULT="${SCRIPT_DIR}/rclone.conf"
@@ -132,14 +140,6 @@ mkdir -p "$WORK_DIR"
 
 LOG_FILE="${WORK_DIR}/${LABEL}_cloud_backup_${STAMP}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
-
-# ---------- Fancy banner ----------
-print_banner
-echo -e "${C_CYAN}=== ${PROJECT_NAME} ===${C_RESET}"
-echo -e "Host     : ${HOST_TAG}"
-echo -e "Work dir : ${WORK_DIR}"
-echo -e "Log file : ${LOG_FILE}"
-echo -e "Config   : ${CONFIG_FILE}"
 
 # ---------- Helpers ----------
 need() { command -v "$1" >/dev/null 2>&1 || { err "Missing dependency: $1"; return 1; }; }
