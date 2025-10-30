@@ -1,37 +1,17 @@
-# ==========================================================
-# rclone-gpg-cloud-backup — system requirements
-# Works on Debian, Ubuntu, and most Linux distributions
-# ==========================================================
-
-# Minimal required packages:
+# --- Base dependencies ---
 bash
 gnupg
-rclone
 tar
 zstd
 pigz
 
-# For ASCII banner at startup (optional but nice):
+# --- Optional (nice extras) ---
 figlet
 toilet
 toilet-fonts
-
-# (Optional) useful tools:
 coreutils
 findutils
 
-# ----------------------------------------------------------
-# INSTALLATION (Debian/Ubuntu)
-# ----------------------------------------------------------
-sudo apt update && sudo apt install -y \
-  gnupg rclone tar zstd pigz figlet toilet toilet-fonts
-
-# ----------------------------------------------------------
-# NOTE:
-# If your system uses an old version of rclone,
-# install the latest one directly from official script:
-#
-#   curl https://rclone.org/install.sh | sudo bash
-#
-# That command automatically installs the latest stable rclone.
-# ----------------------------------------------------------
+# --- rclone ---
+# install separately via:
+# curl https://rclone.org/install.sh | sudo bash
