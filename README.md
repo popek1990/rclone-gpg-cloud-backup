@@ -56,17 +56,13 @@ grep -v '^#' requirements.txt | xargs -r sudo apt install -y
 
 `curl https://rclone.org/install.sh | sudo bash`
 
-### 4. Create starter config
+### 4. Edit starter config
 ```bash
-./rclone-gpg-cloud-backup.sh --init-config
+cd rclone-gpg-cloud-backup && \
+sudo nano rclone.conf
 ```
 
-This command will create the file (in this folder):
-```bash
-rclone-gpg-cloud-backup/
-```
-
-Open this file in your text editor (for example `nano`) and set:
+After open this file in your text editor (for example `nano`) set:
 - `BACKUP_ITEMS` — which folders/files to back up  
 - `GPG_RECIPIENT_FPR` — your GPG public key fingerprint  
 - `REMOTE_NAME` — rclone remote name (e.g. onedrive, gdrive, s3)  
